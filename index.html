@@ -6,7 +6,7 @@
   <title>跑步訓練紀錄</title>
   <link rel="manifest" href="manifest.json">
   
-  <!-- 引入 SheetJS 函式庫，讓 APP 能直接讀取 Excel 檔案 -->
+  <!-- 引入 SheetJS 函式庫，讓 APP 能直接讀取 Excel/CSV 檔案 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <style>
@@ -58,7 +58,6 @@
       gap: 8px;
     }
 
-    /* 日期選擇器樣式 */
     #date-picker {
       margin-left: auto;
       font-family: inherit;
@@ -107,37 +106,64 @@
     
     #status-message { text-align: center; margin-top: 10px; font-size: 0.95rem; font-weight: bold; }
 
-    /* 匯入區塊樣式 */
+    /* === 匯入區塊與分頁樣式 === */
     .import-section {
       background: rgba(0, 0, 0, 0.05);
       border: 1px dashed var(--ink-color);
       box-shadow: none;
       padding: 15px;
     }
-    input[type="file"] { margin-bottom: 10px; font-family: inherit; font-size: 0.9rem; }
+    .tab-nav {
+      display: flex;
+      border-bottom: 2px solid var(--ink-color);
+      margin-bottom: 15px;
+    }
+    .tab-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      padding: 8px 10px;
+      font-size: 1rem;
+      font-weight: bold;
+      color: #888;
+      cursor: pointer;
+      transition: color 0.3s, border-bottom 0.3s;
+      outline: none;
+      font-family: inherit;
+    }
+    .tab-btn.active {
+      color: var(--ink-color);
+      border-bottom: 3px solid var(--accent-color);
+    }
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+    .mode-box {
+      background-color: rgba(255,255,255,0.7); 
+      padding: 15px; 
+      border-radius: 4px; 
+      border: 1px solid #ccc;
+    }
   </style>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
 
   <div class="container">
     <h1>跑步訓練紀錄</h1>
 
-    <!-- 課表顯示區 -->
     <div class="section">
       <h2>📅 課表 <input type="date" id="date-picker"></h2>
-      <div id="today-plan">
-        <p>🔄 正在讀取...</p>
-      </div>
+      <div id="today-plan"><p>🔄 正在讀取...</p></div>
     </div>
 
-    <!-- 動態暖身區 -->
     <div class="section" id="warmup-section">
       <h2>🏃 跑前動態暖身 (7步驟)</h2>
       <div id="warmup-checklist"></div>
     </div>
 
-    <!-- 訓練筆記區 -->
     <div class="section">
       <h2>📝 訓練筆記</h2>
       <textarea id="run-note" placeholder="例如：今天 10K 體感不錯..."></textarea>
@@ -145,24 +171,51 @@
       <div id="status-message"></div>
     </div>
 
-    <!-- 系統設定區 (放在最下方避免干擾日常使用) -->
+    <!-- 系統設定區：雙模式匯入 (分頁版) -->
     <div class="section import-section">
-      <h2 style="font-size: 1rem;">⚙️ 系統設定 (匯入課表)</h2>
+      <h2 style="font-size: 1.1rem; margin-bottom: 10px;">⚙️ 系統設定 (匯入課表)</h2>
       
-      <div style="background-color: rgba(255,255,255,0.7); padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #ccc;">
-        <p style="font-size: 0.9rem; margin-top: 0; font-weight: bold;">📝 步驟 1：下載並填寫課表</p>
-        <a href="./跑步訓練計畫表(空白).xlsx" download="跑步訓練計畫表(空白).xlsx" style="display: inline-block; text-decoration: none; color: var(--bg-color); background-color: var(--accent-color); padding: 6px 12px; border-radius: 4px; font-size: 0.9rem; margin-bottom: 5px;">📥 下載 Excel 空白範本</a>
-        <p style="font-size: 0.8rem; color: #555; margin-bottom: 0;">直接在 Excel 填寫完畢後存檔即可，無須轉換格式。</p>
+      <!-- 頁籤按鈕 -->
+      <div class="tab-nav">
+        <button class="tab-btn active" onclick="switchTab('tab-local', this)">📂 本機檔案</button>
+        <button class="tab-btn" onclick="switchTab('tab-cloud', this)">☁️ 雲端同步</button>
       </div>
 
-      <p style="font-size: 0.9rem; margin-top: 0; font-weight: bold;">📂 步驟 2：載入 Excel 檔案</p>
-      <input type="file" id="excel-file" accept="*/*">
-      <button class="btn" style="background-color: #555;" onclick="importExcel()">📥 載入 Excel 檔案</button>
+      <!-- 頁籤 1：本機檔案 -->
+      <div id="tab-local" class="tab-pane active mode-box">
+        <p style="font-size: 0.8rem; color: #555; margin-top: 0; margin-bottom: 10px;">請選擇手機內的 Excel 或 CSV 檔案。</p>
+        <a href="./跑步訓練計畫表(空白).xlsx" download="跑步訓練計畫表(空白).xlsx" style="display: inline-block; text-decoration: none; color: var(--bg-color); background-color: var(--accent-color); padding: 6px 12px; border-radius: 4px; font-size: 0.85rem; margin-bottom: 12px;">📥 下載 Excel 空白範本</a>
+        <br>
+        <input type="file" id="excel-file" accept="*/*" style="font-size: 0.9rem; margin-bottom: 10px; width: 100%;">
+        <button class="btn" style="background-color: #555; padding: 10px; font-size: 1rem;" onclick="importExcel()">載入所選檔案</button>
+      </div>
+
+      <!-- 頁籤 2：雲端網址同步 -->
+      <div id="tab-cloud" class="tab-pane mode-box">
+        <p style="font-size: 0.8rem; color: #555; margin-top: 0; margin-bottom: 10px;">請貼上 Google 試算表「發布到網路 (CSV)」的連結。</p>
+        <input type="text" id="sync-url" placeholder="貼上 https://docs.google.com/..." style="width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #aaa; border-radius: 4px; box-sizing: border-box; font-family: inherit;">
+        <button class="btn" id="sync-btn" style="background-color: #4b8b5a; padding: 10px; font-size: 1rem;" onclick="syncFromCloud()">🔄 立即同步最新課表</button>
+      </div>
     </div>
   </div>
 
   <script>
     let selectedDateString = ''; 
+
+    // ==========================================
+    // 0. UI 控制：分頁切換功能
+    // ==========================================
+    function switchTab(tabId, btnElement) {
+      document.querySelectorAll('.tab-pane').forEach(pane => {
+        pane.classList.remove('active');
+      });
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+      });
+      
+      document.getElementById(tabId).classList.add('active');
+      btnElement.classList.add('active');
+    }
 
     // ==========================================
     // 1. IndexedDB 離線資料庫設定
@@ -265,14 +318,13 @@
       const statusMsg = document.getElementById('status-message');
 
       if (!noteInput) {
-        statusMsg.innerText = "⚠️ 請先填寫筆記內容再儲存！";
+        statusMsg.innerText = "⚠️️ 請先填寫筆記內容再儲存！";
         statusMsg.style.color = "var(--accent-color)";
         return;
       }
 
       try {
         let existingData = await getFromDB(selectedDateString) || { '日期': selectedDateString };
-        
         existingData['實際距離/配速紀錄'] = noteInput;
         existingData['完成狀態'] = '✔️'; 
 
@@ -282,7 +334,6 @@
         saveBtn.style.backgroundColor = "#4b8b5a";
         statusMsg.innerText = "✅ 紀錄已安全保存在本機端！";
         statusMsg.style.color = "#4b8b5a";
-
       } catch (error) {
         statusMsg.innerText = "❌ 儲存失敗！";
         statusMsg.style.color = "var(--accent-color)";
@@ -294,46 +345,37 @@
       }
     }
 
-// ==========================================
-    // 4. 解析與匯入 Excel 檔案 (使用 SheetJS)
+    // ==========================================
+    // 4. 模式一：解析與匯入實體檔案 (Excel/CSV)
     // ==========================================
     async function importExcel() {
       const fileInput = document.getElementById('excel-file');
       if (!fileInput.files.length) {
-        alert('請先選擇一個 Excel 檔案！');
+        alert('請先選擇一個 Excel 或 CSV 檔案！');
         return;
       }
 
       const file = fileInput.files[0];
-      
-      // 🚨 新增：檢查副檔名防呆邏輯
       const fileName = file.name.toLowerCase();
+      
       if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls') && !fileName.endsWith('.csv')) {
-        alert('⚠️ 格式錯誤！請選擇副檔名為 .xlsx 或 .csv 的訓練計畫表檔案。');
-        fileInput.value = ''; // 清空選擇
-        return;
+        alert('⚠️ 格式可能錯誤，但系統仍會嘗試解析。建議選擇 .xlsx 或 .csv 檔案。');
       }
 
       const reader = new FileReader();
-
       reader.onload = async function(e) {
-        // ... (下方原本的程式碼保持不變)
         try {
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
-          
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
-          
           const dataArray = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
 
           if (dataArray.length === 0) {
-            alert('解析失敗或檔案為空！');
-            return;
+            alert('解析失敗或檔案為空！'); return;
           }
 
           await initDB();
-          
           for (const row of dataArray) {
             if (row['日期'] && String(row['日期']).includes('/')) {
               let dateStr = String(row['日期']).trim();
@@ -341,21 +383,108 @@
               if(dateParts.length === 2) {
                  row['日期'] = `${dateParts[0].padStart(2, '0')}/${dateParts[1].padStart(2, '0')}`;
               }
+              let existingData = await getFromDB(row['日期']);
+              if (existingData && existingData['實際距離/配速紀錄']) {
+                 row['實際距離/配速紀錄'] = existingData['實際距離/配速紀錄'];
+                 row['完成狀態'] = existingData['完成狀態'];
+              }
               await saveToDB(row);
             }
           }
-          alert('🎉 課表匯入成功！資料已儲存至手機。');
+          alert('🎉 檔案匯入成功！資料已儲存至手機。');
           fetchPlanByDate(); 
         } catch (error) {
-          alert('解析 Excel 檔案時發生錯誤：' + error);
+          alert('解析檔案時發生錯誤：' + error);
         }
       };
-
       reader.readAsArrayBuffer(file);
     }
 
     // ==========================================
-    // 5. 初始化與事件綁定
+    // 5. 模式二：透過網址自動同步雲端課表
+    // ==========================================
+    async function syncFromCloud() {
+      const urlInput = document.getElementById('sync-url').value.trim();
+      const syncBtn = document.getElementById('sync-btn');
+
+      if (!urlInput) {
+        alert("⚠️ 請先貼上 Google 試算表的發布連結！"); return;
+      }
+
+      localStorage.setItem('RunningApp_SyncURL', urlInput);
+      syncBtn.disabled = true;
+      syncBtn.innerText = "⏳ 雲端同步中...";
+
+      try {
+        const response = await fetch(urlInput);
+        if (!response.ok) throw new Error("網路連線異常或網址錯誤");
+        
+        const text = await response.text();
+        const dataArray = parseCSV(text);
+
+        if (dataArray.length === 0) {
+          alert('讀取不到課表資料，請確認網址是否正確。'); return;
+        }
+
+        await initDB();
+        for (const row of dataArray) {
+          if (row['日期'] && String(row['日期']).includes('/')) {
+            let dateStr = String(row['日期']).trim();
+            const dateParts = dateStr.split('/');
+            if(dateParts.length === 2) {
+               row['日期'] = `${dateParts[0].padStart(2, '0')}/${dateParts[1].padStart(2, '0')}`;
+            }
+            let existingData = await getFromDB(row['日期']);
+            if (existingData && existingData['實際距離/配速紀錄']) {
+               row['實際距離/配速紀錄'] = existingData['實際距離/配速紀錄'];
+               row['完成狀態'] = existingData['完成狀態'];
+            }
+            await saveToDB(row);
+          }
+        }
+        alert('🎉 雲端課表同步成功！');
+        fetchPlanByDate(); 
+      } catch (error) {
+        alert('同步失敗：' + error.message + '\n請確認您貼上的是「發布到網路」的 CSV 連結。');
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.innerText = "🔄 立即同步最新課表";
+      }
+    }
+
+    function parseCSV(text) {
+      let p = '', row = [''], ret = [row], i = 0, r = 0, s = !0, l;
+      for (l of text) {
+        if ('"' === l) {
+          if (s && l === p) row[i] += l; s = !s;
+        } else if (',' === l && s) l = row[++i] = '';
+        else if ('\n' === l && s) {
+          if ('\r' === p) row[i] = row[i].slice(0, -1);
+          row = ret[++r] = [l = '']; i = 0;
+        } else row[i] += l;
+        p = l;
+      }
+      
+      let headerIndex = 0;
+      for (let j = 0; j < ret.length; j++) {
+        if (ret[j].some(cell => cell && cell.includes('日期'))) {
+          headerIndex = j; break;
+        }
+      }
+
+      const headers = ret[headerIndex].map(h => h.trim());
+      const data = [];
+      for(let j = headerIndex + 1; j < ret.length; j++) {
+        if (ret[j].length === 1 && ret[j][0].trim() === '') continue; 
+        let obj = {};
+        headers.forEach((h, idx) => { obj[h] = ret[j][idx] ? ret[j][idx].trim() : ''; });
+        data.push(obj);
+      }
+      return data;
+    }
+
+    // ==========================================
+    // 6. 初始化與事件綁定
     // ==========================================
     const warmupSteps = [
       "站姿抱膝 (10-15次)", "站姿抓踝 (10-15次)", "直腿踢 (10-15次)",
@@ -380,6 +509,9 @@
       
       datePicker.addEventListener('change', fetchPlanByDate);
       fetchPlanByDate();
+
+      const savedUrl = localStorage.getItem('RunningApp_SyncURL');
+      if (savedUrl) document.getElementById('sync-url').value = savedUrl;
     });
 
     if ('serviceWorker' in navigator) {
