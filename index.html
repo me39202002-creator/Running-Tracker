@@ -54,6 +54,19 @@
       gap: 8px;
     }
 
+    /* 日期選擇器樣式 */
+    #date-picker {
+      margin-left: auto;
+      font-family: inherit;
+      font-size: 1rem;
+      padding: 4px 8px;
+      border: 1px solid var(--ink-color);
+      border-radius: 4px;
+      background-color: rgba(255, 255, 255, 0.8);
+      color: var(--ink-color);
+      cursor: pointer;
+    }
+
     #today-plan { font-size: 1rem; line-height: 1.6; }
     .plan-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dotted #ccc; }
     .plan-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
@@ -98,72 +111,137 @@
     <h1>KEN-LEE 訓練核對</h1>
 
     <div class="section">
-      <h2>📅 今日課表 <span id="display-date" style="font-size: 0.9rem; font-weight: normal; margin-left: auto;"></span></h2>
+      <h2>📅 課表 <input type="date" id="date-picker"></h2>
       <div id="today-plan">
-        <p>🔄 正在從雲端讀取今日課表...</p>
+        <p>🔄 正在讀取...</p>
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" id="warmup-section">
       <h2>🏃 跑前動態暖身 (7步驟)</h2>
       <div id="warmup-checklist"></div>
     </div>
 
     <div class="section">
       <h2>📝 跑後筆記 (體感/配速)</h2>
-      <textarea id="run-note" placeholder="例如：今天 10K 體感不錯，最後 2K 有成功加速到 7'25''..."></textarea>
-      <button id="save-btn" class="save-btn" onclick="saveNote()">💾 儲存今日紀錄</button>
+      <textarea id="run-note" placeholder="例如：今天 10K 體感不錯..."></textarea>
+      <button id="save-btn" class="save-btn" onclick="saveNote()">💾 儲存紀錄</button>
       <div id="status-message"></div>
     </div>
   </div>
 
   <script>
-    // 您最新的 API 網址
     const API_URL = 'https://script.google.com/macros/s/AKfycbzRw059idz5CNAjomqia4qbXWA04vZv8p3g5kYviZHwkHq515NPKZyT0rmOw4AgOmqi/exec';
-    
-    let todayDateString = '';
+    let selectedDateString = ''; // 改為儲存當前選擇的日期
 
     // ==========================================
-    // 讀取今日課表
+    // 1. IndexedDB 核心設定
     // ==========================================
-    async function fetchTodayPlan() {
-      const planDisplay = document.getElementById('today-plan');
-      const dateDisplay = document.getElementById('display-date');
+    const DB_NAME = 'RunningTrackerDB';
+    const STORE_NAME = 'RunNotes';
+    let db;
+
+    function initDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+        request.onupgradeneeded = (event) => {
+          db = event.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: 'date' });
+          }
+        };
+        request.onsuccess = (event) => { db = event.target.result; resolve(db); };
+        request.onerror = (event) => reject(event.target.error);
+      });
+    }
+
+    function saveToIndexedDB(date, note) {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put({ date: date, note: note, synced: false });
+        request.onsuccess = () => resolve();
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }
+
+    function getFromIndexedDB(date) {
+      return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(date);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = (e) => reject(e.target.error);
+      });
+    }
+
+    // ==========================================
+    // 2. 讀取指定日期的課表 (新增休息日隱藏暖身邏輯)
+    // ==========================================
+    async function fetchPlanByDate() {
+      await initDB();
       
-      const today = new Date();
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      const day = String(today.getDate()).padStart(2, '0');
-      todayDateString = `${month}/${day}`; 
-      dateDisplay.innerText = `(${todayDateString})`;
+      const planDisplay = document.getElementById('today-plan');
+      const noteInput = document.getElementById('run-note');
+      const datePicker = document.getElementById('date-picker');
+      const statusMsg = document.getElementById('status-message');
+      const warmupSection = document.getElementById('warmup-section'); // 抓取暖身區塊
+      
+      // 清空先前的狀態
+      noteInput.value = '';
+      statusMsg.innerText = '';
+      planDisplay.innerHTML = '<p>🔄 正在讀取...</p>';
+
+      // 取得選擇器上的日期並轉換為 MM/DD 格式
+      const dateVal = new Date(datePicker.value);
+      const month = String(dateVal.getMonth() + 1).padStart(2, '0');
+      const day = String(dateVal.getDate()).padStart(2, '0');
+      selectedDateString = `${month}/${day}`;
 
       try {
         const response = await fetch(API_URL);
         const data = await response.json();
-        const todayData = data.find(item => item['日期'] === todayDateString);
+        const targetData = data.find(item => item['日期'] === selectedDateString);
 
-        if (todayData) {
+        if (targetData) {
           planDisplay.innerHTML = `
-            <div class="plan-item"><strong>📌 屬性：</strong> ${todayData['屬性'] || '無'}</div>
-            <div class="plan-item"><strong>🎯 主題：</strong> ${todayData['課表主題'] || '無'}</div>
-            <div class="plan-item"><strong>📍 距離/內容：</strong> ${todayData['計畫距離/內容'] || '無'}</div>
-            <div class="plan-item"><strong>⏱ 預定配速：</strong> ${todayData['目標配速 / 強度區間'] || '無'}</div>
-            ${todayData['備註與重點提示'] ? `<div class="plan-item" style="color: var(--accent-color); font-size: 0.9em; margin-top:5px;"><strong>💡 ${todayData['備註與重點提示']}</strong></div>` : ''}
+            <div class="plan-item"><strong>📌 屬性：</strong> ${targetData['屬性'] || '無'}</div>
+            <div class="plan-item"><strong>🎯 主題：</strong> ${targetData['課表主題'] || '無'}</div>
+            <div class="plan-item"><strong>📍 距離/內容：</strong> ${targetData['計畫距離/內容'] || '無'}</div>
+            <div class="plan-item"><strong>⏱ 預定配速：</strong> ${targetData['目標配速 / 強度區間'] || '無'}</div>
+            ${targetData['備註與重點提示'] ? `<div class="plan-item" style="color: var(--accent-color); font-size: 0.9em; margin-top:5px;"><strong>💡 ${targetData['備註與重點提示']}</strong></div>` : ''}
           `;
-          
-          if (todayData['實際距離/配速紀錄']) {
-             document.getElementById('run-note').value = todayData['實際距離/配速紀錄'];
+          if (targetData['實際距離/配速紀錄']) {
+             noteInput.value = targetData['實際距離/配速紀錄'];
           }
+
+          // ==========================================
+          // 自動隱藏邏輯：如果主題包含「休息」，就隱藏暖身區塊
+          // ==========================================
+          if (targetData['課表主題'] && targetData['課表主題'].includes('休息')) {
+            warmupSection.style.display = 'none';
+          } else {
+            warmupSection.style.display = 'block'; // 跑步日正常顯示
+          }
+
         } else {
-          planDisplay.innerHTML = `<p>✅ 今日無排定課表。</p>`;
+          planDisplay.innerHTML = `<p>✅ 該日 (${selectedDateString}) 無排定課表。</p>`;
+          warmupSection.style.display = 'none'; // 沒排課表也預設隱藏
         }
       } catch (error) {
-        console.error('讀取失敗：', error);
-        planDisplay.innerHTML = '<p>❌ 讀取課表失敗，請檢查網路連線。</p>';
+        console.warn('雲端讀取失敗');
+        planDisplay.innerHTML = '<p>📴 目前無法載入雲端課表。</p>';
+      }
+
+      // 檢查本機 IndexedDB 是否有該日期的筆記
+      const localData = await getFromIndexedDB(selectedDateString);
+      if (localData && localData.note) {
+         noteInput.value = localData.note;
       }
     }
-
+    
     // ==========================================
-    // 將筆記儲存至試算表 (使用 GET 請求避開 CORS)
+    // 3. 儲存筆記 (綁定當前選擇的日期)
     // ==========================================
     async function saveNote() {
       const noteInput = document.getElementById('run-note').value.trim();
@@ -177,47 +255,44 @@
       }
 
       saveBtn.disabled = true;
-      saveBtn.innerText = "⏳ 正在儲存至雲端...";
+      saveBtn.innerText = "⏳ 儲存中...";
       statusMsg.innerText = "";
 
       try {
-        // 將資料轉化為網址參數 (GET 請求)
+        await saveToIndexedDB(selectedDateString, noteInput);
+        
+        saveBtn.innerText = "✔️ 已存入手機";
+        saveBtn.style.backgroundColor = "#4b8b5a";
+        statusMsg.innerText = "📱 紀錄已保存！正在同步至雲端...";
+        statusMsg.style.color = "#4b8b5a";
+
         const queryParams = new URLSearchParams({
           action: 'save',
-          date: todayDateString,
+          date: selectedDateString,
           note: noteInput
         }).toString();
 
-        const fetchUrl = `${API_URL}?${queryParams}`;
-
-        const response = await fetch(fetchUrl);
+        const response = await fetch(`${API_URL}?${queryParams}`);
         const result = await response.json();
 
         if (result.status === 'success') {
-          saveBtn.innerText = "✔️ 儲存成功";
-          saveBtn.style.backgroundColor = "#4b8b5a";
-          statusMsg.innerText = "✅ 紀錄已成功寫入試算表！(完成狀態已打勾)";
-          statusMsg.style.color = "#4b8b5a";
-          
-          setTimeout(() => {
-            saveBtn.disabled = false;
-            saveBtn.innerText = "💾 再次儲存更新";
-            saveBtn.style.backgroundColor = "var(--ink-color)";
-          }, 3000);
-        } else {
-          throw new Error(result.message);
+           statusMsg.innerText = "✅ 紀錄已同步至 Google 試算表！";
         }
       } catch (error) {
-        console.error('儲存失敗：', error);
-        saveBtn.disabled = false;
-        saveBtn.innerText = "💾 重新儲存";
-        statusMsg.innerText = "❌ 儲存失敗，請再試一次";
-        statusMsg.style.color = "var(--accent-color)";
+        console.warn('同步失敗', error);
+        statusMsg.innerText = "⚠️ 雲端同步失敗，但資料已安全保存在手機中！";
+        statusMsg.style.color = "#d97706";
+      } finally {
+        setTimeout(() => {
+          saveBtn.disabled = false;
+          saveBtn.innerText = "💾 再次儲存更新";
+          saveBtn.style.backgroundColor = "var(--ink-color)";
+        }, 3000);
       }
     }
 
     // ==========================================
-    // 暖身清單產生
+    // 4. 初始化：設定預設日期並綁定事件
     // ==========================================
     const warmupSteps = [
       "站姿抱膝 (10-15次)", "站姿抓踝 (10-15次)", "直腿踢 (10-15次)",
@@ -232,13 +307,28 @@
       checklistContainer.appendChild(item);
     });
 
-    window.addEventListener('DOMContentLoaded', fetchTodayPlan);
-  // 註冊 Service Worker (啟動 PWA 離線功能)
+    // 網頁載入時，將日期選擇器預設為「今天」，並執行讀取
+    window.addEventListener('DOMContentLoaded', () => {
+      const datePicker = document.getElementById('date-picker');
+      const today = new Date();
+      
+      // 設定 input[type="date"] 的格式必須是 YYYY-MM-DD
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      datePicker.value = `${yyyy}-${mm}-${dd}`;
+      
+      // 當使用者改變日期時，重新讀取課表
+      datePicker.addEventListener('change', fetchPlanByDate);
+      
+      // 首次載入執行
+      fetchPlanByDate();
+    });
+
+    // 註冊 Service Worker
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then(reg => console.log('Service Worker 註冊成功！'))
-          .catch(err => console.log('Service Worker 註冊失敗：', err));
+        navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW 註冊失敗', err));
       });
     }
   </script>
