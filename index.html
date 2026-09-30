@@ -156,7 +156,7 @@
       </div>
 
       <p style="font-size: 0.9rem; margin-top: 0; font-weight: bold;">📂 步驟 2：載入 Excel 檔案</p>
-      <input type="file" id="excel-file" accept=".xlsx, .xls, .csv">
+      <input type="file" id="excel-file" accept="*/*">
       <button class="btn" style="background-color: #555;" onclick="importExcel()">📥 載入 Excel 檔案</button>
     </div>
   </div>
@@ -294,7 +294,7 @@
       }
     }
 
-    // ==========================================
+// ==========================================
     // 4. 解析與匯入 Excel 檔案 (使用 SheetJS)
     // ==========================================
     async function importExcel() {
@@ -305,9 +305,19 @@
       }
 
       const file = fileInput.files[0];
+      
+      // 🚨 新增：檢查副檔名防呆邏輯
+      const fileName = file.name.toLowerCase();
+      if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls') && !fileName.endsWith('.csv')) {
+        alert('⚠️ 格式錯誤！請選擇副檔名為 .xlsx 或 .csv 的訓練計畫表檔案。');
+        fileInput.value = ''; // 清空選擇
+        return;
+      }
+
       const reader = new FileReader();
 
       reader.onload = async function(e) {
+        // ... (下方原本的程式碼保持不變)
         try {
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
