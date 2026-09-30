@@ -185,7 +185,7 @@
 
       <!-- 新增：重設資料庫按鈕 -->
       <div style="text-align: right; margin-top: 15px;">
-        <button class="btn" style="background-color: #888; padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="clearDatabase()">🧹 清除所有舊資料</button>
+        <button class="btn" style="background-color: #888; padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="clearScheduleOnly()">🧹 清除舊課表 (保留筆記)</button>
       </div>
 
     </div>
@@ -241,16 +241,41 @@
       });
     }
 
-    // 清除資料庫 (重設功能)
-    async function clearDatabase() {
-      if (confirm('確定要清除手機內的所有課表與筆記資料嗎？\n\n清除後只要重新「雲端同步」即可載入最新正確的課表。')) {
+    // 清除舊課表 (但保留使用者的筆記與完成狀態)
+    async function clearScheduleOnly() {
+      if (confirm('確定要清除舊的課表嗎？\n\n（別擔心，您寫過的「訓練筆記」與「完成狀態」將會被安全保留！）')) {
         await initDB();
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
-        const request = store.clear();
-        request.onsuccess = () => {
-          alert('🧹 資料庫已清空！請重新同步最新課表。');
-          fetchPlanByDate();
+        const request = store.openCursor(); // 打開游標，逐筆檢查資料庫
+
+        request.onsuccess = (event) => {
+          const cursor = event.target.result;
+          if (cursor) {
+            const data = cursor.value;
+            // 檢查：如果這天有寫筆記，或是已經打勾完成
+            if (data['實際距離/配速紀錄'] || data['完成狀態'] === '✔️') {
+              // 只保留筆記跟狀態，其他課表欄位清空
+              const keepData = {
+                '日期': data['日期'],
+                '實際距離/配速紀錄': data['實際距離/配速紀錄'] || '',
+                '完成狀態': data['完成狀態'] || ''
+              };
+              cursor.update(keepData); // 更新覆蓋
+            } else {
+              // 沒寫筆記的空課表，直接刪除
+              cursor.delete();
+            }
+            cursor.continue(); // 繼續檢查下一筆
+          } else {
+            // 全部檢查完畢
+            alert('🧹 舊課表已清除，您的訓練筆記已安全保留！請重新同步最新課表。');
+            fetchPlanByDate(); // 重新整理畫面
+          }
+        };
+        
+        request.onerror = () => {
+          alert('❌ 清除失敗，請稍後再試。');
         };
       }
     }
