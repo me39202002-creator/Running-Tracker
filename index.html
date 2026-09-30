@@ -145,7 +145,7 @@
         <button class="btn" id="sync-btn" style="background-color: #4b8b5a; padding: 10px; font-size: 1rem;" onclick="syncFromCloud()">🔄 立即同步最新課表</button>
       </div>
 
-      <!-- 頁籤 3：AI 助理 -->
+      <!-- 頁籤 3：AI 助理 (新增配速選項) -->
       <div id="tab-ai" class="tab-pane mode-box">
         <p style="font-size: 0.85rem; color: #333; margin-top: 0; margin-bottom: 10px; font-weight: bold;">讓 AI 直接為您產生整個月的訓練試算表！</p>
         
@@ -167,11 +167,22 @@
           <option value="6">每週訓練：6 天</option>
         </select>
 
+        <!-- 新增：平日跑步配速 -->
+        <select id="ai-pace" class="ai-select">
+          <option value="">平日配速：不指定 (由 AI 評估)</option>
+          <option value="4:30 - 5:00">平日配速：4:30 - 5:00 /km</option>
+          <option value="5:00 - 5:30">平日配速：5:00 - 5:30 /km</option>
+          <option value="5:30 - 6:00" selected>平日配速：5:30 - 6:00 /km</option>
+          <option value="6:00 - 6:30">平日配速：6:00 - 6:30 /km</option>
+          <option value="6:30 - 7:00">平日配速：6:30 - 7:00 /km</option>
+          <option value="7:00 - 8:00">平日配速：7:00 - 8:00 /km</option>
+        </select>
+
         <button class="btn" style="background-color: #2b5b84; padding: 10px; font-size: 1rem; margin-bottom: 10px;" onclick="generateAIPrompt()">✨ 產生 AI 教練指令</button>
         
         <textarea id="ai-prompt-output" readonly style="height: 140px; font-size: 0.85rem; color: #555; display: none; margin-bottom: 10px;"></textarea>
         <button id="copy-btn" class="btn" style="background-color: #4b8b5a; padding: 10px; font-size: 1rem; display: none;" onclick="copyPrompt()">📋 複製指令 (前往 ChatGPT/Gemini)</button>
-        <p id="ai-tip" style="font-size: 0.8rem; color: var(--accent-color); display: none; margin-top: 5px;">*將指令貼給 AI，它會直接提供您試算表檔案，下載後即可至「📂 檔案匯入」使用！</p>
+        <p id="ai-tip" style="font-size: 0.8rem; color: var(--accent-color); display: none; margin-top: 5px;">*將指令貼給 AI，它會直接提供您試算表檔案，下載後即可匯入！</p>
       </div>
     </div>
   </div>
@@ -247,12 +258,18 @@
       try {
         const targetData = await getFromDB(selectedDateString);
         if (targetData) {
+          const attr = targetData['屬性'] || '無';
+          const topic = targetData['課表主題'] || '無';
+          const dist = targetData['計畫距離/內容'] || targetData['計畫距離 / 內容'] || '無';
+          const pace = targetData['目標配速/強度區間'] || targetData['目標配速 / 強度區間'] || '無';
+          const note = targetData['備註與重點提示'] || targetData['備註'] || '';
+
           planDisplay.innerHTML = `
-            <div class="plan-item"><strong>📌 屬性：</strong> ${targetData['屬性'] || '無'}</div>
-            <div class="plan-item"><strong>🎯 主題：</strong> ${targetData['課表主題'] || '無'}</div>
-            <div class="plan-item"><strong>📍 距離/內容：</strong> ${targetData['計畫距離/內容'] || '無'}</div>
-            <div class="plan-item"><strong>⏱ 預定配速：</strong> ${targetData['目標配速 / 強度區間'] || '無'}</div>
-            ${targetData['備註與重點提示'] ? `<div class="plan-item" style="color: var(--accent-color); font-size: 0.9em; margin-top:5px;"><strong>💡 ${targetData['備註與重點提示']}</strong></div>` : ''}
+            <div class="plan-item"><strong>📌 屬性：</strong> ${attr}</div>
+            <div class="plan-item"><strong>🎯 主題：</strong> ${topic}</div>
+            <div class="plan-item"><strong>📍 距離/內容：</strong> ${dist}</div>
+            <div class="plan-item"><strong>⏱ 預定配速：</strong> ${pace}</div>
+            ${note ? `<div class="plan-item" style="color: var(--accent-color); font-size: 0.9em; margin-top:5px;"><strong>💡 ${note}</strong></div>` : ''}
           `;
           if (targetData['實際距離/配速紀錄']) noteInput.value = targetData['實際距離/配速紀錄'];
           
@@ -297,8 +314,6 @@
     // ==========================================
     // 檔案與雲端匯入邏輯 (無敵日期格式處理)
     // ==========================================
-    
-    // 統一的日期格式化工具：不管遇到 YYYY/MM/DD 或 MM-DD 都強制轉成 MM/DD
     function normalizeDate(rawDateStr) {
       if (!rawDateStr) return null;
       let dStr = String(rawDateStr).trim().replace(/-/g, '/');
@@ -313,9 +328,6 @@
       return null;
     }
 
-    // ==========================================
-    // 檔案匯入邏輯 (升級版：自動跳過大標題，尋找真實欄位)
-    // ==========================================
     async function importExcel() {
       const fileInput = document.getElementById('excel-file');
       if (!fileInput.files.length) { alert('請先選擇檔案！'); return; }
@@ -325,38 +337,23 @@
         try {
           const data = new Uint8Array(e.target.result);
           const workbook = XLSX.read(data, { type: 'array' });
-          
-          // 【關鍵升級】改用 header: 1 將 Excel 讀取成單純的二維陣列
           const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "", raw: false });
 
-          // 自動往下掃描，尋找哪一列包含了「日期」這兩個字
           let headerIndex = rows.findIndex(r => r.some(c => String(c).includes('日期')));
-          
-          if(headerIndex === -1) {
-             alert('⚠️ 找不到包含「日期」的標題列，請確認檔案格式。');
-             return;
-          }
+          if(headerIndex === -1) { alert('⚠️ 找不到包含「日期」的標題列。'); return; }
 
-          // 抓出真正的標題列
           let headers = rows[headerIndex].map(h => String(h).trim());
           
           await initDB();
           let count = 0;
-          
-          // 從標題列的「下一列」開始逐行讀取課表資料
           for (let i = headerIndex + 1; i < rows.length; i++) {
-            if (rows[i].length < 2) continue; // 跳過全空的列
-            
+            if (rows[i].length < 2) continue;
             let rowObj = {};
-            headers.forEach((h, idx) => {
-               rowObj[h] = rows[i][idx] ? String(rows[i][idx]).trim() : '';
-            });
+            headers.forEach((h, idx) => { rowObj[h] = rows[i][idx] ? String(rows[i][idx]).trim() : ''; });
 
             let standardDate = normalizeDate(rowObj['日期']);
             if (standardDate) {
               rowObj['日期'] = standardDate;
-              
-              // 保護原本的筆記
               let existingData = await getFromDB(standardDate);
               if (existingData && existingData['實際距離/配速紀錄']) {
                  rowObj['實際距離/配速紀錄'] = existingData['實際距離/配速紀錄']; 
@@ -366,14 +363,13 @@
               count++;
             }
           }
-          
           if(count > 0){
              alert(`🎉 成功匯入並更新 ${count} 天的訓練計畫！`); 
              fetchPlanByDate(); 
           } else {
-             alert('⚠️ 匯入完成，但沒有找到符合的日期資料。');
+             alert('⚠️ 沒有找到符合的資料。');
           }
-          fileInput.value = ''; // 清空選擇器以便下次重新選擇
+          fileInput.value = '';
         } catch (error) { alert('解析失敗：' + error); }
       };
       reader.readAsArrayBuffer(fileInput.files[0]);
@@ -408,8 +404,6 @@
           let standardDate = normalizeDate(rowObj['日期']);
           if (standardDate) {
             rowObj['日期'] = standardDate;
-            
-            // 保護原本的筆記
             let existingData = await getFromDB(standardDate);
             if (existingData && existingData['實際距離/配速紀錄']) {
                rowObj['實際距離/配速紀錄'] = existingData['實際距離/配速紀錄']; 
@@ -429,12 +423,13 @@
     }
 
     // ==========================================
-    // AI 教練指令產生器
+    // AI 教練指令產生器 (新增基礎配速邏輯)
     // ==========================================
     function generateAIPrompt() {
       const distance = document.getElementById('ai-distance').value;
       const monthVal = document.getElementById('ai-month').value;
       const days = document.getElementById('ai-days').value;
+      const pace = document.getElementById('ai-pace').value;
       
       let yyyy = "****", mm = "**";
       if (monthVal) {
@@ -443,7 +438,14 @@
         mm = parts[1];
       }
 
+      // 如果有選擇配速，就加入配速提示詞
+      let pacePrompt = "";
+      if (pace) {
+        pacePrompt = `我目前的平日跑步配速大約是 ${pace}，請根據這個基礎來安排適合的各區間目標配速。`;
+      }
+
       const promptTemplate = `請幫我建立一份 [${yyyy}年${mm}月] 的 [${distance}跑步訓練計畫表] 試算表檔案。每週請安排 ${days} 天訓練，其餘天數安排休息。
+${pacePrompt}
 內容請包含以下欄位：日期、星期、屬性、課表主題、計畫距離/內容、目標配速/強度區間、完成狀態、實際距離/配速紀錄、備註與重點提示。
 請直接幫我輸出成試算表格式。`;
 
