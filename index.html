@@ -3,8 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>跑步訓練核對</title>
+  <title>KEN-LEE 訓練核對</title>
   <link rel="manifest" href="manifest.json">
+  
+  <!-- 引入 SheetJS 函式庫，讓 APP 能直接讀取 Excel 檔案 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
   <style>
     :root {
       --bg-color: #f4f1ea;
@@ -117,8 +121,7 @@
 <body>
 
   <div class="container">
-    <h1>跑步訓練紀錄
-    </h1>
+    <h1>KEN-LEE 訓練核對</h1>
 
     <!-- 課表顯示區 -->
     <div class="section">
@@ -142,21 +145,21 @@
       <div id="status-message"></div>
     </div>
 
-        <!-- 系統設定區 (放在最下方避免干擾日常使用) -->
+    <!-- 系統設定區 (放在最下方避免干擾日常使用) -->
     <div class="section import-section">
       <h2 style="font-size: 1rem;">⚙️ 系統設定 (匯入課表)</h2>
       
-      <!-- 新增的下載範本區塊 -->
       <div style="background-color: rgba(255,255,255,0.7); padding: 10px; border-radius: 4px; margin-bottom: 15px; border: 1px solid #ccc;">
         <p style="font-size: 0.9rem; margin-top: 0; font-weight: bold;">📝 步驟 1：下載並填寫課表</p>
         <a href="./跑步訓練計畫表(空白).xlsx" download="跑步訓練計畫表(空白).xlsx" style="display: inline-block; text-decoration: none; color: var(--bg-color); background-color: var(--accent-color); padding: 6px 12px; border-radius: 4px; font-size: 0.9rem; margin-bottom: 5px;">📥 下載 Excel 空白範本</a>
-        <p style="font-size: 0.8rem; color: #555; margin-bottom: 0;">填寫完畢後，請在 Excel 中選擇「另存新檔」並將格式改為 CSV 檔。</p>
+        <p style="font-size: 0.8rem; color: #555; margin-bottom: 0;">直接在 Excel 填寫完畢後存檔即可，無須轉換格式。</p>
       </div>
 
-      <p style="font-size: 0.9rem; margin-top: 0; font-weight: bold;">📂 步驟 2：載入 CSV 檔案</p>
-      <input type="file" id="csv-file" accept=".csv">
-      <button class="btn" style="background-color: #555;" onclick="importCSV()">📥 載入 CSV 檔案</button>
+      <p style="font-size: 0.9rem; margin-top: 0; font-weight: bold;">📂 步驟 2：載入 Excel 檔案</p>
+      <input type="file" id="excel-file" accept=".xlsx, .xls, .csv">
+      <button class="btn" style="background-color: #555;" onclick="importExcel()">📥 載入 Excel 檔案</button>
     </div>
+  </div>
 
   <script>
     let selectedDateString = ''; 
@@ -174,7 +177,7 @@
         request.onupgradeneeded = (event) => {
           db = event.target.result;
           if (!db.objectStoreNames.contains(STORE_NAME)) {
-            db.createObjectStore(STORE_NAME, { keyPath: '日期' }); // 以「日期」欄位作為主鍵
+            db.createObjectStore(STORE_NAME, { keyPath: '日期' });
           }
         };
         request.onsuccess = (event) => { db = event.target.result; resolve(db); };
@@ -218,7 +221,6 @@
       statusMsg.innerText = '';
       planDisplay.innerHTML = '<p>🔄 正在讀取...</p>';
 
-      // 取得選擇器日期並轉為 MM/DD
       const dateVal = new Date(datePicker.value);
       const month = String(dateVal.getMonth() + 1).padStart(2, '0');
       const day = String(dateVal.getDate()).padStart(2, '0');
@@ -240,14 +242,13 @@
              noteInput.value = targetData['實際距離/配速紀錄'];
           }
 
-          // 休息日隱藏暖身邏輯
           if (targetData['課表主題'] && targetData['課表主題'].includes('休息')) {
             warmupSection.style.display = 'none';
           } else {
             warmupSection.style.display = 'block'; 
           }
         } else {
-          planDisplay.innerHTML = `<p>✅ 該日 (${selectedDateString}) 無排定課表，或尚未匯入 CSV 資料。</p>`;
+          planDisplay.innerHTML = `<p>✅ 該日 (${selectedDateString}) 無排定課表，或尚未匯入資料。</p>`;
           warmupSection.style.display = 'none'; 
         }
       } catch (error) {
@@ -270,12 +271,10 @@
       }
 
       try {
-        // 先取得當天的既有資料，如果沒有就建立新物件
         let existingData = await getFromDB(selectedDateString) || { '日期': selectedDateString };
         
-        // 更新筆記欄位
         existingData['實際距離/配速紀錄'] = noteInput;
-        existingData['完成狀態'] = '✔️'; // 同步打勾
+        existingData['完成狀態'] = '✔️'; 
 
         await saveToDB(existingData);
         
@@ -296,12 +295,12 @@
     }
 
     // ==========================================
-    // 4. 解析與匯入 CSV 檔案
+    // 4. 解析與匯入 Excel 檔案 (使用 SheetJS)
     // ==========================================
-    async function importCSV() {
-      const fileInput = document.getElementById('csv-file');
+    async function importExcel() {
+      const fileInput = document.getElementById('excel-file');
       if (!fileInput.files.length) {
-        alert('請先選擇一個 CSV 檔案！');
+        alert('請先選擇一個 Excel 檔案！');
         return;
       }
 
@@ -309,21 +308,26 @@
       const reader = new FileReader();
 
       reader.onload = async function(e) {
-        const text = e.target.result;
-        const dataArray = parseCSV(text);
-
-        if (dataArray.length === 0) {
-          alert('CSV 解析失敗或檔案為空！');
-          return;
-        }
-
         try {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          
+          const dataArray = XLSX.utils.sheet_to_json(worksheet, { defval: "", raw: false });
+
+          if (dataArray.length === 0) {
+            alert('解析失敗或檔案為空！');
+            return;
+          }
+
           await initDB();
-          // 將解析出來的每一列資料寫入 IndexedDB
+          
           for (const row of dataArray) {
-            if (row['日期']) {
-              // 如果 CSV 裡的日期長得像 10/1，補 0 變成 10/01 確保比對精準
-              const dateParts = row['日期'].split('/');
+            if (row['日期'] && String(row['日期']).includes('/')) {
+              let dateStr = String(row['日期']).trim();
+              const dateParts = dateStr.split('/');
               if(dateParts.length === 2) {
                  row['日期'] = `${dateParts[0].padStart(2, '0')}/${dateParts[1].padStart(2, '0')}`;
               }
@@ -331,50 +335,13 @@
             }
           }
           alert('🎉 課表匯入成功！資料已儲存至手機。');
-          fetchPlanByDate(); // 重新整理畫面
+          fetchPlanByDate(); 
         } catch (error) {
-          alert('寫入資料庫時發生錯誤：' + error);
+          alert('解析 Excel 檔案時發生錯誤：' + error);
         }
       };
 
-      reader.readAsText(file); // 讀取檔案
-    }
-
-    // 進階 CSV 解析器 (能正確處理內含逗號與換行的儲存格)
-   function parseCSV(text) {
-      let p = '', row = [''], ret = [row], i = 0, r = 0, s = !0, l;
-      for (l of text) {
-        if ('"' === l) {
-          if (s && l === p) row[i] += l;
-          s = !s;
-        } else if (',' === l && s) l = row[++i] = '';
-        else if ('\n' === l && s) {
-          if ('\r' === p) row[i] = row[i].slice(0, -1);
-          row = ret[++r] = [l = '']; i = 0;
-        } else row[i] += l;
-        p = l;
-      }
-      
-      // 自動尋找包含「日期」的那一列當作正確的標題列
-      let headerIndex = 0;
-      for (let j = 0; j < ret.length; j++) {
-        if (ret[j].some(cell => cell && cell.includes('日期'))) {
-          headerIndex = j;
-          break;
-        }
-      }
-
-      const headers = ret[headerIndex].map(h => h.trim());
-      const data = [];
-      for(let j = headerIndex + 1; j < ret.length; j++) {
-        if (ret[j].length === 1 && ret[j][0].trim() === '') continue; // 跳過空白行
-        let obj = {};
-        headers.forEach((h, idx) => {
-          obj[h] = ret[j][idx] ? ret[j][idx].trim() : '';
-        });
-        data.push(obj);
-      }
-      return data;
+      reader.readAsArrayBuffer(file);
     }
 
     // ==========================================
