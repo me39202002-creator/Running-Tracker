@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KEN-LEE 訓練核對</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    :root {
+      --bg-color: #f4f1ea;
+      --ink-color: #2c2c2c;
+      --accent-color: #b84b4b;
+    }
+
+    body {
+      font-family: 'Noto Sans TC', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--ink-color);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      background-image: url('https://www.transparenttextures.com/patterns/cream-paper.png');
+    }
+
+    .container {
+      width: 100%;
+      max-width: 500px;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      text-align: center;
+      border-bottom: 2px dashed var(--ink-color);
+      padding-bottom: 10px;
+      margin-bottom: 25px;
+      letter-spacing: 2px;
+    }
+
+    .section {
+      background: rgba(255, 255, 255, 0.6);
+      border: 2px solid var(--ink-color);
+      border-radius: 4px;
+      padding: 15px 20px;
+      margin-bottom: 25px;
+      box-shadow: 4px 4px 0px rgba(0, 0, 0, 0.1);
+    }
+
+    .section h2 {
+      font-size: 1.2rem;
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #today-plan { font-size: 1rem; line-height: 1.6; }
+    .plan-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dotted #ccc; }
+    .plan-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+    .checklist-item { display: flex; align-items: center; margin-bottom: 12px; cursor: pointer; }
+    .checklist-item input[type="checkbox"] { display: none; }
+    .checklist-item label { display: flex; align-items: center; cursor: pointer; font-size: 1.05rem; transition: color 0.3s; }
+    
+    .checkbox-custom {
+      width: 22px; height: 22px; border: 2px solid var(--ink-color); border-radius: 3px;
+      margin-right: 12px; display: flex; justify-content: center; align-items: center; position: relative;
+    }
+
+    .checklist-item input[type="checkbox"]:checked + label .checkbox-custom::after {
+      content: '✔'; color: var(--accent-color); font-size: 20px; font-weight: bold;
+      position: absolute; top: -4px; left: 2px;
+    }
+    .checklist-item input[type="checkbox"]:checked + label { text-decoration: line-through; color: #888; }
+
+    textarea {
+      width: 100%; height: 100px; background: transparent; border: 1px solid #aaa;
+      border-radius: 4px; padding: 10px; font-family: inherit; font-size: 1rem;
+      resize: vertical; box-sizing: border-box; margin-bottom: 10px;
+    }
+    textarea:focus { outline: none; border-color: var(--ink-color); background: rgba(255, 255, 255, 0.9); }
+    
+    .save-btn {
+      width: 100%; padding: 12px; font-size: 1.1rem; font-weight: bold;
+      background-color: var(--ink-color); color: var(--bg-color); border: none;
+      border-radius: 4px; cursor: pointer; transition: background-color 0.3s;
+    }
+    .save-btn:hover { background-color: #444; }
+    .save-btn:disabled { background-color: #888; cursor: not-allowed; }
+    
+    #status-message { text-align: center; margin-top: 10px; font-size: 0.95rem; font-weight: bold; }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <div class="container">
+    <h1>KEN-LEE 訓練核對</h1>
+
+    <div class="section">
+      <h2>📅 今日課表 <span id="display-date" style="font-size: 0.9rem; font-weight: normal; margin-left: auto;"></span></h2>
+      <div id="today-plan">
+        <p>🔄 正在從雲端讀取今日課表...</p>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🏃 跑前動態暖身 (7步驟)</h2>
+      <div id="warmup-checklist"></div>
+    </div>
+
+    <div class="section">
+      <h2>📝 跑後筆記 (體感/配速)</h2>
+      <textarea id="run-note" placeholder="例如：今天 10K 體感不錯，最後 2K 有成功加速到 7'25''..."></textarea>
+      <button id="save-btn" class="save-btn" onclick="saveNote()">💾 儲存今日紀錄</button>
+      <div id="status-message"></div>
+    </div>
+  </div>
+
+  <script>
+    // 您最新的 API 網址
+    const API_URL = 'https://script.google.com/macros/s/AKfycbzRw059idz5CNAjomqia4qbXWA04vZv8p3g5kYviZHwkHq515NPKZyT0rmOw4AgOmqi/exec';
+    
+    let todayDateString = '';
+
+    // ==========================================
+    // 讀取今日課表
+    // ==========================================
+    async function fetchTodayPlan() {
+      const planDisplay = document.getElementById('today-plan');
+      const dateDisplay = document.getElementById('display-date');
+      
+      const today = new Date();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      todayDateString = `${month}/${day}`; 
+      dateDisplay.innerText = `(${todayDateString})`;
+
+      try {
+        const response = await fetch(API_URL);
+        const data = await response.json();
+        const todayData = data.find(item => item['日期'] === todayDateString);
+
+        if (todayData) {
+          planDisplay.innerHTML = `
+            <div class="plan-item"><strong>📌 屬性：</strong> ${todayData['屬性'] || '無'}</div>
+            <div class="plan-item"><strong>🎯 主題：</strong> ${todayData['課表主題'] || '無'}</div>
+            <div class="plan-item"><strong>📍 距離/內容：</strong> ${todayData['計畫距離/內容'] || '無'}</div>
+            <div class="plan-item"><strong>⏱ 預定配速：</strong> ${todayData['目標配速 / 強度區間'] || '無'}</div>
+            ${todayData['備註與重點提示'] ? `<div class="plan-item" style="color: var(--accent-color); font-size: 0.9em; margin-top:5px;"><strong>💡 ${todayData['備註與重點提示']}</strong></div>` : ''}
+          `;
+          
+          if (todayData['實際距離/配速紀錄']) {
+             document.getElementById('run-note').value = todayData['實際距離/配速紀錄'];
+          }
+        } else {
+          planDisplay.innerHTML = `<p>✅ 今日無排定課表。</p>`;
+        }
+      } catch (error) {
+        console.error('讀取失敗：', error);
+        planDisplay.innerHTML = '<p>❌ 讀取課表失敗，請檢查網路連線。</p>';
+      }
+    }
+
+    // ==========================================
+    // 將筆記儲存至試算表 (使用 GET 請求避開 CORS)
+    // ==========================================
+    async function saveNote() {
+      const noteInput = document.getElementById('run-note').value.trim();
+      const saveBtn = document.getElementById('save-btn');
+      const statusMsg = document.getElementById('status-message');
+
+      if (!noteInput) {
+        statusMsg.innerText = "⚠️ 請先填寫筆記內容再儲存！";
+        statusMsg.style.color = "var(--accent-color)";
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.innerText = "⏳ 正在儲存至雲端...";
+      statusMsg.innerText = "";
+
+      try {
+        // 將資料轉化為網址參數 (GET 請求)
+        const queryParams = new URLSearchParams({
+          action: 'save',
+          date: todayDateString,
+          note: noteInput
+        }).toString();
+
+        const fetchUrl = `${API_URL}?${queryParams}`;
+
+        const response = await fetch(fetchUrl);
+        const result = await response.json();
+
+        if (result.status === 'success') {
+          saveBtn.innerText = "✔️ 儲存成功";
+          saveBtn.style.backgroundColor = "#4b8b5a";
+          statusMsg.innerText = "✅ 紀錄已成功寫入試算表！(完成狀態已打勾)";
+          statusMsg.style.color = "#4b8b5a";
+          
+          setTimeout(() => {
+            saveBtn.disabled = false;
+            saveBtn.innerText = "💾 再次儲存更新";
+            saveBtn.style.backgroundColor = "var(--ink-color)";
+          }, 3000);
+        } else {
+          throw new Error(result.message);
+        }
+      } catch (error) {
+        console.error('儲存失敗：', error);
+        saveBtn.disabled = false;
+        saveBtn.innerText = "💾 重新儲存";
+        statusMsg.innerText = "❌ 儲存失敗，請再試一次";
+        statusMsg.style.color = "var(--accent-color)";
+      }
+    }
+
+    // ==========================================
+    // 暖身清單產生
+    // ==========================================
+    const warmupSteps = [
+      "站姿抱膝 (10-15次)", "站姿抓踝 (10-15次)", "直腿踢 (10-15次)",
+      "小腿勺水/滑步勾腳 (10-15次)", "弓箭手轉體 (10-15次)", 
+      "側弓步 (10-15次)", "提膝外旋 (10-15次)"
+    ];
+    const checklistContainer = document.getElementById('warmup-checklist');
+    warmupSteps.forEach((step, index) => {
+      const item = document.createElement('div');
+      item.className = 'checklist-item';
+      item.innerHTML = `<input type="checkbox" id="step-${index}"><label for="step-${index}"><span class="checkbox-custom"></span>${step}</label>`;
+      checklistContainer.appendChild(item);
+    });
+
+    window.addEventListener('DOMContentLoaded', fetchTodayPlan);
+  // 註冊 Service Worker (啟動 PWA 離線功能)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+          .then(reg => console.log('Service Worker 註冊成功！'))
+          .catch(err => console.log('Service Worker 註冊失敗：', err));
+      });
+    }
+  </script>
+</body>
+</html>
