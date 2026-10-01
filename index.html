@@ -5,8 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>跑步訓練紀錄</title>
   <link rel="manifest" href="manifest.json">
+  
   <link rel="icon" type="image/png" href="./Icon.png">
   <link rel="apple-touch-icon" href="./Icon.png">
+  
+  <!-- 引入 SheetJS 函式庫 -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
   <style>
@@ -93,9 +96,28 @@
     .tab-pane { display: none; }
     .tab-pane.active { display: block; }
     .mode-box { background-color: rgba(255,255,255,0.7); padding: 15px; border-radius: 4px; border: 1px solid #ccc; }
+    
     .ai-select {
       width: 100%; padding: 8px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #aaa;
-      font-family: inherit; font-size: 1rem; box-sizing: border-box;
+      font-family: inherit; font-size: 1rem; box-sizing: border-box; background-color: #fff;
+    }
+
+    /* === 新增：微型互動日曆專屬樣式 === */
+    .calendar-container {
+      background: rgba(255, 255, 255, 0.9); border: 1px solid #aaa; border-radius: 4px;
+      padding: 10px; margin-bottom: 10px; display: none; /* 預設隱藏，切換模式才顯示 */
+    }
+    .calendar-header { text-align: center; font-weight: bold; margin-bottom: 8px; color: var(--ink-color); font-size: 1rem; letter-spacing: 1px; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
+    .cal-day-name { font-size: 0.8rem; color: #888; font-weight: bold; margin-bottom: 4px; }
+    .cal-cell {
+      padding: 8px 0; border: 1px solid #ddd; border-radius: 4px; cursor: pointer;
+      font-size: 0.95rem; background: #fff; transition: all 0.2s; user-select: none;
+    }
+    .cal-cell:hover:not(.empty) { background: #f4f1ea; border-color: var(--ink-color); }
+    .cal-cell.empty { background: transparent; border: none; cursor: default; }
+    .cal-cell.selected {
+      background: var(--accent-color); color: var(--bg-color); border-color: var(--accent-color); font-weight: bold;
     }
   </style>
 </head>
@@ -146,7 +168,7 @@
         <button class="btn" id="sync-btn" style="background-color: #4b8b5a; padding: 10px; font-size: 1rem;" onclick="syncFromCloud()">🔄 立即同步最新課表</button>
       </div>
 
-      <!-- 頁籤 3：AI 助理 -->
+      <!-- 頁籤 3：AI 助理 (新增互動日曆) -->
       <div id="tab-ai" class="tab-pane mode-box">
         <p style="font-size: 0.85rem; color: #333; margin-top: 0; margin-bottom: 10px; font-weight: bold;">讓 AI 直接為您產生整個月的訓練試算表！</p>
         
@@ -160,6 +182,13 @@
         
         <input type="month" id="ai-month" class="ai-select">
 
+        <!-- 【全新功能】排表模式切換 -->
+        <select id="ai-schedule-mode" class="ai-select" onchange="toggleScheduleMode()" style="border: 2px solid var(--ink-color);">
+          <option value="weekly">📅 排表方式：依每週天數</option>
+          <option value="custom">🖱️ 排表方式：自訂具體訓練日期</option>
+        </select>
+
+        <!-- 模式A：每週天數選單 -->
         <select id="ai-days" class="ai-select">
           <option value="2">每週訓練：2 天</option>
           <option value="3">每週訓練：3 天</option>
@@ -167,6 +196,13 @@
           <option value="5">每週訓練：5 天</option>
           <option value="6">每週訓練：6 天</option>
         </select>
+
+        <!-- 模式B：互動微型日曆 -->
+        <div id="custom-date-picker" class="calendar-container">
+          <div class="calendar-header" id="cal-month-label"></div>
+          <div class="calendar-grid" id="cal-grid"></div>
+          <p style="font-size: 0.75rem; color: #555; text-align: center; margin-top: 8px; margin-bottom: 0;">👆 請點擊上方日期，選擇您預定要跑步的日子</p>
+        </div>
 
         <select id="ai-pace" class="ai-select">
           <option value="">平日配速：不指定 (由 AI 評估)</option>
@@ -184,7 +220,7 @@
         <button id="copy-btn" class="btn" style="background-color: #4b8b5a; padding: 10px; font-size: 1rem; display: none;" onclick="copyPrompt()">📋 複製指令 (前往 ChatGPT/Gemini)</button>
       </div>
 
-      <!-- 新增：重設資料庫按鈕 -->
+      <!-- 重設資料庫按鈕 -->
       <div style="text-align: right; margin-top: 15px;">
         <button class="btn" style="background-color: #888; padding: 6px 12px; font-size: 0.85rem; width: auto;" onclick="clearScheduleOnly()">🧹 清除舊課表 (保留筆記)</button>
       </div>
@@ -194,6 +230,7 @@
 
   <script>
     let selectedDateString = ''; 
+    let selectedCustomDates = new Set(); // 儲存使用者在日曆上點選的日期
 
     // UI 控制：分頁切換
     function switchTab(tabId, btnElement) {
@@ -203,8 +240,73 @@
       btnElement.classList.add('active');
     }
 
+    // UI 控制：切換排表模式 (每週天數 vs 自訂日期)
+    function toggleScheduleMode() {
+      const mode = document.getElementById('ai-schedule-mode').value;
+      if (mode === 'weekly') {
+        document.getElementById('ai-days').style.display = 'block';
+        document.getElementById('custom-date-picker').style.display = 'none';
+      } else {
+        document.getElementById('ai-days').style.display = 'none';
+        document.getElementById('custom-date-picker').style.display = 'block';
+        renderCalendar(); // 切換時自動渲染日曆
+      }
+    }
+
     // ==========================================
-    // 1. IndexedDB 離線資料庫
+    // 渲染微型日曆功能
+    // ==========================================
+    function renderCalendar() {
+      const monthVal = document.getElementById('ai-month').value;
+      if (!monthVal) return;
+      const parts = monthVal.split('-');
+      const yyyy = parseInt(parts[0], 10);
+      const mm = parseInt(parts[1], 10);
+
+      document.getElementById('cal-month-label').innerText = `${yyyy}年 ${mm}月`;
+      const grid = document.getElementById('cal-grid');
+      grid.innerHTML = '';
+
+      const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+      dayNames.forEach(d => {
+        const div = document.createElement('div');
+        div.className = 'cal-day-name';
+        div.innerText = d;
+        grid.appendChild(div);
+      });
+
+      const firstDay = new Date(yyyy, mm - 1, 1).getDay();
+      const daysInMonth = new Date(yyyy, mm, 0).getDate();
+
+      for (let i = 0; i < firstDay; i++) {
+        const empty = document.createElement('div');
+        empty.className = 'cal-cell empty';
+        grid.appendChild(empty);
+      }
+
+      selectedCustomDates.clear(); // 切換月份時清空已選日期
+
+      for (let d = 1; d <= daysInMonth; d++) {
+        const cell = document.createElement('div');
+        cell.className = 'cal-cell';
+        cell.innerText = d;
+        const dateStr = `${String(mm).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
+        
+        cell.onclick = function() {
+          if (cell.classList.contains('selected')) {
+            cell.classList.remove('selected');
+            selectedCustomDates.delete(dateStr);
+          } else {
+            cell.classList.add('selected');
+            selectedCustomDates.add(dateStr);
+          }
+        };
+        grid.appendChild(cell);
+      }
+    }
+
+    // ==========================================
+    // IndexedDB 離線資料庫
     // ==========================================
     const DB_NAME = 'RunningTrackerOfflineDB';
     const STORE_NAME = 'RunData';
@@ -242,47 +344,40 @@
       });
     }
 
-    // 清除舊課表 (但保留使用者的筆記與完成狀態)
+    // 清除舊課表 (保留筆記)
     async function clearScheduleOnly() {
       if (confirm('確定要清除舊的課表嗎？\n\n（別擔心，您寫過的「訓練筆記」與「完成狀態」將會被安全保留！）')) {
         await initDB();
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
-        const request = store.openCursor(); // 打開游標，逐筆檢查資料庫
+        const request = store.openCursor();
 
         request.onsuccess = (event) => {
           const cursor = event.target.result;
           if (cursor) {
             const data = cursor.value;
-            // 檢查：如果這天有寫筆記，或是已經打勾完成
-            if (data['實際距離/配速紀錄'] || data['完成狀態'] === '✔️') {
-              // 只保留筆記跟狀態，其他課表欄位清空
+            if (data['實際距離/配速紀錄'] || data['完成狀態'] === '✔️️') {
               const keepData = {
                 '日期': data['日期'],
                 '實際距離/配速紀錄': data['實際距離/配速紀錄'] || '',
                 '完成狀態': data['完成狀態'] || ''
               };
-              cursor.update(keepData); // 更新覆蓋
+              cursor.update(keepData); 
             } else {
-              // 沒寫筆記的空課表，直接刪除
               cursor.delete();
             }
-            cursor.continue(); // 繼續檢查下一筆
+            cursor.continue();
           } else {
-            // 全部檢查完畢
             alert('🧹 舊課表已清除，您的訓練筆記已安全保留！請重新同步最新課表。');
-            fetchPlanByDate(); // 重新整理畫面
+            fetchPlanByDate(); 
           }
         };
-        
-        request.onerror = () => {
-          alert('❌ 清除失敗，請稍後再試。');
-        };
+        request.onerror = () => { alert('❌ 清除失敗，請稍後再試。'); };
       }
     }
 
     // ==========================================
-    // 2. 讀取指定日期的課表
+    // 讀取指定日期的課表
     // ==========================================
     async function fetchPlanByDate() {
       await initDB();
@@ -316,9 +411,7 @@
             ${note ? `<div class="plan-item" style="color: var(--accent-color); font-size: 0.9em; margin-top:5px;"><strong>💡 ${note}</strong></div>` : ''}
           `;
           
-          if (targetData['實際距離/配速紀錄']) {
-             noteInput.value = targetData['實際距離/配速紀錄'];
-          }
+          if (targetData['實際距離/配速紀錄']) noteInput.value = targetData['實際距離/配速紀錄'];
           
           if (targetData['課表主題'] && targetData['課表主題'].includes('休息')) {
             warmupSection.style.display = 'none';
@@ -334,9 +427,6 @@
       }
     }
 
-    // ==========================================
-    // 3. 儲存訓練筆記
-    // ==========================================
     async function saveNote() {
       const noteInput = document.getElementById('run-note').value.trim();
       const saveBtn = document.getElementById('save-btn');
@@ -362,34 +452,23 @@
     }
 
     // ==========================================
-    // 4. 檔案與雲端匯入邏輯 (終極版日期解析器)
+    // 檔案與雲端匯入邏輯
     // ==========================================
     function normalizeDate(rawDateStr) {
       if (!rawDateStr) return null;
-      
-      // 處理 Excel 序列號格式
       if (!isNaN(rawDateStr) && Number(rawDateStr) > 30000) {
         const date = new Date(Math.round((Number(rawDateStr) - 25569) * 86400 * 1000));
         return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
       }
-
       let dStr = String(rawDateStr).trim().replace(/-/g, '/');
       let parts = dStr.split('/');
       
       if (parts.length === 3) {
-        // YYYY/MM/DD 格式
-        if (parts[0].length === 4) {
-          return `${parts[1].padStart(2, '0')}/${parts[2].substring(0,2).padStart(2, '0')}`;
-        } 
-        // MM/DD/YYYY 或 DD/MM/YYYY 格式
-        else {
-          return `${parts[0].padStart(2, '0')}/${parts[1].substring(0,2).padStart(2, '0')}`;
-        }
+        if (parts[0].length === 4) return `${parts[1].padStart(2, '0')}/${parts[2].substring(0,2).padStart(2, '0')}`;
+        else return `${parts[0].padStart(2, '0')}/${parts[1].substring(0,2).padStart(2, '0')}`;
       } else if (parts.length === 2) {
-        // 單純的 MM/DD 格式
         return `${parts[0].padStart(2, '0')}/${parts[1].substring(0,2).padStart(2, '0')}`;
       }
-      
       return null;
     }
 
@@ -405,7 +484,7 @@
           const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "", raw: false });
 
           let headerIndex = rows.findIndex(r => r.some(c => String(c).includes('日期')));
-          if(headerIndex === -1) { alert('⚠️️ 找不到包含「日期」的標題列。'); return; }
+          if(headerIndex === -1) { alert('⚠️ 找不到包含「日期」的標題列。'); return; }
 
           let headers = rows[headerIndex].map(h => String(h).trim());
           
@@ -429,12 +508,8 @@
               count++;
             }
           }
-          if(count > 0){
-             alert(`🎉 成功匯入並更新 ${count} 天的訓練計畫！`); 
-             fetchPlanByDate(); 
-          } else {
-             alert('⚠️ 沒有找到符合的資料，請確認檔案內容。');
-          }
+          if(count > 0){ alert(`🎉 成功匯入並更新 ${count} 天的訓練計畫！`); fetchPlanByDate(); } 
+          else { alert('⚠️ 沒有找到符合的資料，請確認檔案內容。'); }
           fileInput.value = ''; 
         } catch (error) { alert('解析失敗：' + error); }
       };
@@ -445,10 +520,8 @@
       const urlInput = document.getElementById('sync-url').value.trim();
       const syncBtn = document.getElementById('sync-btn');
       if (!urlInput) { alert("⚠️ 請貼上連結！"); return; }
-
       if (!urlInput.toLowerCase().includes('csv')) {
-        alert("⚠️ 網址格式不正確！\n\n請確認在 Google 試算表點擊「發布到網路」時，下拉選單有改選為「逗號分隔值 (.csv)」。");
-        return;
+        alert("⚠️ 網址格式不正確！\n\n請確認在 Google 試算表點擊「發布到網路」時，下拉選單有改選為「逗號分隔值 (.csv)」。"); return;
       }
 
       localStorage.setItem('RunningApp_SyncURL', urlInput);
@@ -457,16 +530,12 @@
       try {
         const response = await fetch(urlInput);
         if (!response.ok) throw new Error("網路連線異常");
-        
         const text = await response.text();
         const workbook = XLSX.read(text, { type: 'string' });
         const rows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1, defval: "", raw: false });
 
         let headerIndex = rows.findIndex(r => r.some(c => String(c).includes('日期')));
-        if(headerIndex === -1) { 
-           alert('⚠️ 雲端資料找不到包含「日期」的標題列，請確認資料內容。'); 
-           return; 
-        }
+        if(headerIndex === -1) { alert('⚠️ 雲端資料找不到包含「日期」的標題列。'); return; }
 
         let headers = rows[headerIndex].map(h => String(h).trim());
         
@@ -474,7 +543,6 @@
         let count = 0;
         for (let i = headerIndex + 1; i < rows.length; i++) {
           if (rows[i].length < 2) continue;
-          
           let rowObj = {};
           headers.forEach((h, idx) => { rowObj[h] = rows[i][idx] ? String(rows[i][idx]).trim() : ''; });
 
@@ -490,13 +558,8 @@
             count++;
           }
         }
-        
-        if (count > 0) {
-          alert(`🎉 雲端同步成功！已更新 ${count} 天的訓練計畫！`); 
-          fetchPlanByDate(); 
-        } else {
-          alert('⚠️ 雲端連線成功，但沒有找到符合的日期資料。');
-        }
+        if (count > 0) { alert(`🎉 雲端同步成功！已更新 ${count} 天的訓練計畫！`); fetchPlanByDate(); } 
+        else { alert('⚠️ 雲端連線成功，但沒有找到符合的日期資料。'); }
       } catch (error) {
         alert('同步失敗：請確認網址是否正確，錯誤資訊：' + error.message);
       } finally {
@@ -505,39 +568,47 @@
     }
 
     // ==========================================
-    // 5. AI 教練指令產生器
+    // 5. AI 教練指令產生器 (支援自訂日曆選擇)
     // ==========================================
     function generateAIPrompt() {
       const distance = document.getElementById('ai-distance').value;
       const monthVal = document.getElementById('ai-month').value;
-      const days = document.getElementById('ai-days').value;
+      const mode = document.getElementById('ai-schedule-mode').value;
       const pace = document.getElementById('ai-pace').value;
       
       let yyyy = "****", mm = "**";
       if (monthVal) {
         const parts = monthVal.split('-');
-        yyyy = parts[0];
-        mm = parts[1];
+        yyyy = parts[0]; mm = parts[1];
       }
 
-      let pacePrompt = "";
-      if (pace) {
-        pacePrompt = `我目前的平日跑步配速大約是 ${pace}，請根據這個基礎來安排適合的各區間目標配速。`;
+      let pacePrompt = pace ? `我目前的平日跑步配速大約是 ${pace}，請根據這個基礎來安排適合的各區間目標配速。` : "";
+      let schedulePrompt = "";
+
+      if (mode === 'weekly') {
+        const days = document.getElementById('ai-days').value;
+        schedulePrompt = `每週請安排 ${days} 天訓練，其餘天數安排休息。`;
+      } else {
+        if (selectedCustomDates.size === 0) {
+          alert("⚠️ 請在日曆上點擊選擇您預定要跑步的日期！");
+          return;
+        }
+        const sortedDates = Array.from(selectedCustomDates).sort();
+        schedulePrompt = `我預定在這個月的以下指定日期進行訓練：\n${sortedDates.join(', ')}\n請「只在」這些指定的日期安排訓練課表，其餘未指定的日期請全部安排為「休息」。`;
       }
 
-      const promptTemplate = `請幫我建立一份 [${yyyy}年${mm}月] 的 [${distance}跑步訓練計畫表] 試算表檔案。每週請安排 ${days} 天訓練，其餘天數安排休息。
+      const promptTemplate = `請幫我建立一份 [${yyyy}年${mm}月] 的 [${distance}跑步訓練計畫表] 試算表檔案。
+${schedulePrompt}
 ${pacePrompt}
 內容請包含以下欄位：日期、星期、屬性、課表主題、計畫距離/內容、目標配速/強度區間、完成狀態、實際距離/配速紀錄、備註與重點提示。
 請直接幫我輸出成試算表格式。`;
 
       const outputArea = document.getElementById('ai-prompt-output');
       const copyBtn = document.getElementById('copy-btn');
-      const tip = document.getElementById('ai-tip');
       
       outputArea.value = promptTemplate;
       outputArea.style.display = 'block';
       copyBtn.style.display = 'block';
-      tip.style.display = 'block';
     }
 
     function copyPrompt() {
@@ -566,15 +637,20 @@ ${pacePrompt}
 
       const currentMonthVal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
       document.getElementById('ai-month').value = currentMonthVal;
+      
+      // 當使用者變更月份時，同步重新渲染日曆
+      document.getElementById('ai-month').addEventListener('change', () => {
+        if (document.getElementById('ai-schedule-mode').value === 'custom') {
+          renderCalendar();
+        }
+      });
 
       const savedUrl = localStorage.getItem('RunningApp_SyncURL');
       if (savedUrl) document.getElementById('sync-url').value = savedUrl;
     });
 
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW 註冊失敗', err));
-      });
+      window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW 註冊失敗', err)); });
     }
   </script>
 </body>
